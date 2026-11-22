@@ -1,0 +1,121 @@
+<!doctype html>
+<!-- Renders the README preview images: the real card from dist/ with mocked
+     ha-card / ha-icon and a mocked hass object. Not Home Assistant itself.
+
+     Parameters:  ?lang=en|de   ?layout=themes|grid
+
+     Regenerate all images from the repo root:  sh docs/render-previews.sh -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font-family: Roboto, -apple-system, "Segoe UI", sans-serif; display: flex; }
+  .theme { flex: 1; padding: 16px; }
+  .themes .theme > miele-card { display: block; height: auto; margin-bottom: 8px; }
+
+  /* sections dashboard at real size: 12 columns, the card takes 6 (≈ 245 px) */
+  .grid .theme { width: 498px; flex: none; }
+  .grid h2 { margin: 0 4px 12px; font-size: 20px; font-weight: 400; color: var(--primary-text-color); }
+  .grid .cards { display: grid; grid-template-columns: 245px 245px; gap: 8px; }
+
+  .light {
+    background: #f2f2f2; --card-background-color: #fff; --ha-card-border-color: #e0e0e0;
+    --primary-text-color: #212121; --secondary-text-color: #727272; --disabled-color: #bdbdbd;
+  }
+  .dark {
+    background: #111; --card-background-color: #1c1c1c; --ha-card-border-color: #2c2c2c;
+    --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b; --disabled-color: #6f6f6f;
+  }
+  .theme { --orange-color: #ff9800; --blue-color: #2196f3; --green-color: #4caf50; --red-color: #f44336; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { mdiStove, mdiTumbleDryer, mdiDishwasher, mdiWashingMachine } from "https://cdn.jsdelivr.net/npm/@mdi/js@7.4.47/mdi.js";
+  const ICONS = { "mdi:stove": mdiStove, "mdi:tumble-dryer": mdiTumbleDryer, "mdi:dishwasher": mdiDishwasher, "mdi:washing-machine": mdiWashingMachine };
+
+  customElements.define("ha-card", class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" }).innerHTML =
+        `<style>:host{display:block;background:var(--card-background-color);border:1px solid var(--ha-card-border-color);border-radius:12px}</style><slot></slot>`;
+    }
+  });
+  customElements.define("ha-icon", class extends HTMLElement {
+    static get observedAttributes() { return ["icon"]; }
+    attributeChangedCallback() {
+      this.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="display:block;fill:currentColor"><path d="${ICONS[this.getAttribute("icon")] || ""}"/></svg>`;
+    }
+  });
+
+  await import("../dist/miele-card.js");
+
+  const params = new URLSearchParams(location.search);
+  const lang = params.get("lang") === "de" ? "de" : "en";
+  const layout = params.get("layout") === "grid" ? "grid" : "themes";
+
+  // What Miele@LAN's translations would return for these sensor states
+  const LABELS = {
+    en: { fan_plus: "Fan plus", heating_up: "Heating up", eco: "ECO", rinse: "Final rinse", failure: "Failure",
+          cottons: "Cottons", main_wash: "Main wash" },
+    de: { fan_plus: "Heißluft plus", heating_up: "Aufheizen", eco: "ECO", rinse: "Klarspülen", failure: "Ausfall",
+          cottons: "Baumwolle", main_wash: "Hauptwäsche" },
+  }[lang];
+
+  function hass(model, ents) {
+    const h = {
+      locale: { language: lang }, language: lang,
+      devices: { dev1: { id: "dev1", model, name: model } }, entities: {}, states: {},
+      formatEntityState: (s) => LABELS[s.state] || s.state,
+    };
+    for (const [key, state] of Object.entries(ents)) {
+      const id = `sensor.dev1_${key}`;
+      h.entities[id] = { entity_id: id, device_id: "dev1", platform: "miele_lan", translation_key: key };
+      h.states[id] = { entity_id: id, state: String(state), last_changed: "x" };
+    }
+    return h;
+  }
+
+  // [fake "now", model, sensors] – fixed clock so the times match the README
+  const ALL_STATES = [
+    ["12:32", "Oven", { status: "in_use", program_id: "fan_plus", program_phase: "heating_up",
+      cavity_temperature: 178, target_temperature: 200, elapsed_minutes: 42, remaining_minutes: 18, progress: 70 }],
+    ["22:40", "Dishwasher", { status: "waiting_to_start", program_id: "eco", start_in_minutes: 200 }],
+    ["12:32", "Dishwasher", { status: "pause", program_id: "eco", program_phase: "rinse", remaining_minutes: 72, progress: 55 }],
+    ["12:32", "Tumble Dryer", { status: "program_ended" }],
+    ["12:32", "Dishwasher", { status: "failure" }],
+    ["12:32", "Oven", { status: "off" }],
+  ];
+  const HOUSEHOLD = [
+    ALL_STATES[0],
+    ["12:32", "Washing Machine", { status: "in_use", program_id: "cottons", program_phase: "main_wash", remaining_minutes: 95, progress: 30 }],
+    ALL_STATES[3],
+    ALL_STATES[5],
+  ];
+
+  function addCard(parent, [now, model, ents]) {
+    const [hh, mm] = now.split(":").map(Number);
+    const realNow = Date.now;
+    Date.now = () => new Date(2026, 10, 22, hh, mm).getTime();
+    const card = document.createElement("miele-card");
+    parent.appendChild(card);
+    card.setConfig({ type: "custom:miele-card", device: "dev1" });
+    card.hass = hass(model, ents);
+    Date.now = realNow;
+  }
+
+  document.body.className = layout;
+  for (const theme of ["light", "dark"]) {
+    const col = document.createElement("div");
+    col.className = `theme ${theme}`;
+    document.body.appendChild(col);
+    if (layout === "themes") {
+      ALL_STATES.forEach((c) => addCard(col, c));
+    } else {
+      col.innerHTML = `<h2>${lang === "de" ? "Haushalt" : "Household"}</h2><div class="cards"></div>`;
+      HOUSEHOLD.forEach((c) => addCard(col.querySelector(".cards"), c));
+    }
+  }
+</script>
+</body>
+</html>

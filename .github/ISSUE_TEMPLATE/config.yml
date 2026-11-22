@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sensor values, setup or missing entities (Miele@LAN)
+    url: https://github.com/tiehfood/ha-miele-at-lan/issues
+    about: Problems with the appliance's sensors themselves belong to the Miele@LAN integration.

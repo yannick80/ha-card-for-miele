@@ -1,0 +1,56 @@
+name: Bug report
+description: The card shows something wrong, shows an error or does not load.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Wrong or missing sensor values on the device page itself are a Miele@LAN topic:
+        please report those at https://github.com/tiehfood/ha-miele-at-lan/issues.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: card_version
+    attributes:
+      label: Card version
+      description: Shown in the browser console (F12) as `miele-card x.y.z`.
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+    validations:
+      required: true
+  - type: input
+    id: lan_version
+    attributes:
+      label: Miele@LAN version
+  - type: input
+    id: appliance
+    attributes:
+      label: Appliance type and model
+      placeholder: e.g. Oven H 7460 BP
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser or app
+      placeholder: e.g. Chrome 131, HA Companion app on iOS, Shelly Wall Display
+  - type: textarea
+    id: yaml
+    attributes:
+      label: Card YAML
+      render: yaml
+  - type: textarea
+    id: states
+    attributes:
+      label: Sensor states and screenshot
+      description: >
+        A screenshot of the card and of the appliance's sensors on its device page.
+        Remove serial numbers and IP addresses before posting.
