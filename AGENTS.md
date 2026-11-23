@@ -1,4 +1,4 @@
-# AGENTS.md – ha-miele-card
+# AGENTS.md – ha-card-for-miele
 
 Dashboard card for [Miele@LAN](https://github.com/tiehfood/ha-miele-at-lan)
 appliances, distributed through HACS as a **Dashboard** (plugin) repository.
