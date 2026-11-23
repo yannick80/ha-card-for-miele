@@ -1,23 +1,23 @@
 <p align="center">
-  <a href="https://my.home-assistant.io/redirect/marketplace_repository/?owner=yannick80&repository=ha-miele-card&category=plugin">
+  <a href="https://my.home-assistant.io/redirect/marketplace_repository/?owner=yannick80&repository=ha-card-for-miele&category=plugin">
     <img alt="Open in the Home Assistant Marketplace" src="https://my.home-assistant.io/badges/marketplace_repository.svg"/>
   </a>
 </p>
 <p align="center">
-  <a href="https://github.com/yannick80/ha-miele-card/releases/latest">
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/yannick80/ha-miele-card?label=release"/>
+  <a href="https://github.com/yannick80/ha-card-for-miele/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/yannick80/ha-card-for-miele?label=release"/>
   </a>
   <a href="https://www.home-assistant.io">
     <img alt="HA 2024.12+" src="https://img.shields.io/badge/HA-2024.12%2B-blue.svg"/>
   </a>
-  <a href="https://github.com/yannick80/ha-miele-card/actions/workflows/validate.yml">
-    <img alt="Validate" src="https://img.shields.io/github/actions/workflow/status/yannick80/ha-miele-card/validate.yml?branch=main&label=validate"/>
+  <a href="https://github.com/yannick80/ha-card-for-miele/actions/workflows/validate.yml">
+    <img alt="Validate" src="https://img.shields.io/github/actions/workflow/status/yannick80/ha-card-for-miele/validate.yml?branch=main&label=validate"/>
   </a>
-  <a href="https://github.com/yannick80/ha-miele-card/releases">
-    <img alt="Downloads" src="https://img.shields.io/github/downloads/yannick80/ha-miele-card/total.svg"/>
+  <a href="https://github.com/yannick80/ha-card-for-miele/releases">
+    <img alt="Downloads" src="https://img.shields.io/github/downloads/yannick80/ha-card-for-miele/total.svg"/>
   </a>
   <a href="LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/yannick80/ha-miele-card.svg"/>
+    <img alt="License" src="https://img.shields.io/github/license/yannick80/ha-card-for-miele.svg"/>
   </a>
 </p>
 
@@ -93,29 +93,29 @@ In a sections dashboard at its default width (6 of 12 columns), the text wraps o
 
 **One click:** select this button, then confirm in your Home Assistant.
 
-[![Open Marketplace repository on My Home Assistant](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=yannick80&repository=ha-miele-card&category=plugin)
+[![Open Marketplace repository on My Home Assistant](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=yannick80&repository=ha-card-for-miele&category=plugin)
 
 **Or by hand:**
 
 1. In Home Assistant, go to **Settings** > **Marketplace**.
 2. In the upper-right corner, select **Add from link**.
-3. Under **GitHub link**, enter `https://github.com/yannick80/ha-miele-card`. If Home Assistant asks for the type, choose **Dashboard**.
+3. Under **GitHub link**, enter `https://github.com/yannick80/ha-card-for-miele`. If Home Assistant asks for the type, choose **Dashboard**.
 4. Open Card for Miele@LAN and select **Install**.
 5. Reload the browser (on phones and tablets: close and reopen the app).
 
 ### Home Assistant 2026.10 and older (HACS)
 
-[![Open in HACS on My Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=yannick80&repository=ha-miele-card&category=plugin)
+[![Open in HACS on My Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=yannick80&repository=ha-card-for-miele&category=plugin)
 
 1. Open **HACS** in the sidebar.
 2. Select the three dots in the upper-right corner, then **Custom repositories**.
-3. Enter `https://github.com/yannick80/ha-miele-card`, choose the type **Dashboard**, and select **Add**.
+3. Enter `https://github.com/yannick80/ha-card-for-miele`, choose the type **Dashboard**, and select **Add**.
 4. Open Card for Miele@LAN and select **Download**.
 5. Reload the browser.
 
 ### Manual installation
 
-1. Download `miele-card.js` from the [latest release](https://github.com/yannick80/ha-miele-card/releases/latest).
+1. Download `miele-card.js` from the [latest release](https://github.com/yannick80/ha-card-for-miele/releases/latest).
 2. Copy it to `config/www/miele-card.js` (the `www` folder next to `configuration.yaml`; create it if it does not exist).
 3. Go to **Settings** > **Dashboards**, select the three dots, then **Resources**.
    (No **Resources** entry? Turn on **Advanced mode** in your user profile first.)
@@ -215,7 +215,7 @@ Reload the browser with the cache cleared. The browser console (F12) shows the l
 
 ## Getting help
 
-Open an [issue](https://github.com/yannick80/ha-miele-card/issues/new/choose). Please include:
+Open an [issue](https://github.com/yannick80/ha-card-for-miele/issues/new/choose). Please include:
 
 - the card version (shown in the browser console as `miele-card x.y.z`),
 - your Home Assistant and Miele@LAN versions,
