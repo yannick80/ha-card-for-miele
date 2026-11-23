@@ -1,7 +1,7 @@
 /**
  * Card for Miele@LAN – a Home Assistant dashboard card for appliances connected
  * through the Miele@LAN integration. Not affiliated with Miele & Cie. KG.
- * https://github.com/yannick80/ha-miele-card
+ * https://github.com/yannick80/ha-card-for-miele
  *
  * Plain custom element, no build step and no dependencies. Entities are found
  * through the device registry and their translation_key, so the card works
@@ -12,7 +12,7 @@
 (function () {
 "use strict";
 
-const VERSION = "0.1.0";
+const VERSION = "1.0.1";
 const DOMAIN = "miele_lan";
 
 // translation_keys of Miele@LAN sensors the card can use
@@ -693,7 +693,7 @@ if (!window.customCards.some((c) => c.type === "miele-card")) {
     name: "Card for Miele@LAN",
     description: "Status, program and remaining time of a Miele@LAN appliance",
     preview: true,
-    documentationURL: "https://github.com/yannick80/ha-miele-card",
+    documentationURL: "https://github.com/yannick80/ha-card-for-miele",
   });
 }
 
