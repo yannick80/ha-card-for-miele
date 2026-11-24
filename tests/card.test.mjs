@@ -234,3 +234,157 @@ test("editor works while ha-form is not defined and fills in the device", () => 
   assert.ok(ev, "config-changed was not fired");
   assert.equal(ev.detail.config.device, "dev1");
 });
+
+// ------------------------------------------------------------ overview card
+
+function mkHassMulti(devs, lang = "de") {
+  // devs: { id: [model, { translation_key: state }] }
+  const hass = {
+    locale: { language: lang }, language: lang, devices: {}, entities: {}, states: {},
+    formatEntityState: (s) => ({ fan_plus: "Heißluft plus", failure: "Ausfall" })[s.state] || s.state,
+  };
+  for (const [id, [model, ents]] of Object.entries(devs)) {
+    hass.devices[id] = { id, model, name: `${model} ${id}` };
+    for (const [key, state] of Object.entries(ents)) {
+      const eid = `sensor.${id}_${key}`;
+      hass.entities[eid] = { entity_id: eid, device_id: id, platform: "miele_lan", translation_key: key };
+      hass.states[eid] = { entity_id: eid, state: String(state), last_changed: "x" };
+    }
+  }
+  return hass;
+}
+
+const FOUR = {
+  oven: ["Oven", { status: "in_use", program_id: "fan_plus", remaining_minutes: 18, progress: 70 }],
+  dish: ["Dishwasher", { status: "waiting_to_start", start_in_minutes: 200 }],
+  dryer: ["Tumble Dryer", { status: "program_ended" }],
+  washer: ["Washing Machine", { status: "off" }],
+};
+
+function renderOverview(ctx, config, hass) {
+  const Card = ctx.customElements.get("miele-overview-card");
+  const card = new Card();
+  card.setConfig(config);
+  card.hass = hass;
+  const r = card.shadowRoot;
+  const tiles = (card._tiles || []).map((t) => ({
+    hidden: t.root.hidden,
+    width: t.root.style.getPropertyValue("width"),
+    color: t.root.style.getPropertyValue("--miele-color"),
+    icon: t.icon.getAttribute("icon"),
+    name: t.name.textContent,
+    value: t.value.textContent,
+    sub: t.sub.textContent,
+    ring: t.ring.innerHTML,
+    root: t.root,
+  }));
+  const footer = r.querySelector(".footer");
+  return {
+    card, tiles,
+    warning: r.querySelector(".warning") && r.querySelector(".warning").textContent,
+    footer: footer && !footer.hidden ? footer.textContent : null,
+  };
+}
+
+test("overview card is registered once with its own card picker entry", () => {
+  const ctx = loadCard();
+  vm.runInContext(SOURCE, ctx, { filename: "miele-card.js" });
+  assert.ok(ctx.customElements.get("miele-overview-card"));
+  assert.ok(ctx.customElements.get("miele-overview-card-editor"));
+  assert.equal(ctx.window.customCards.filter((c) => c.type === "miele-overview-card").length, 1);
+});
+
+test("overview without devices shows a hint, a non-list is rejected", () => {
+  const ctx = loadCard();
+  assert.equal(renderOverview(ctx, {}, mkHassMulti(FOUR)).warning, "Keine Miele@LAN-Geräte ausgewählt");
+  const card = new (ctx.customElements.get("miele-overview-card"))();
+  assert.throws(() => card.setConfig({ devices: "oven" }), /list/);
+});
+
+test("overview shows the most important value of each appliance side by side", () => {
+  const ctx = loadCard();
+  const r = renderOverview(ctx, { devices: ["oven", "dish", "dryer", "washer"] }, mkHassMulti(FOUR));
+  const [oven, dish, dryer, washer] = r.tiles;
+
+  assert.equal(oven.name, "Backofen");
+  assert.equal(oven.value, "0:18 h");
+  assert.match(oven.sub, /^bis \d\d:\d\d$/);
+  assert.equal(oven.color, "var(--orange-color)");
+  assert.match(oven.ring, /class="arc"[^>]*stroke-dashoffset="38\.6/); // 70 % of the ring
+  // styles for the ring must not reach the SVG inside ha-icon (it would leave the centre)
+  assert.match(oven.ring, /<svg class="ring-svg"/);
+  assert.doesNotMatch(SOURCE, /\.ring svg\b/);
+
+  assert.match(dish.value, /^\d\d:\d\d$/);
+  assert.equal(dish.sub, "Start in 3:20 h");
+
+  assert.equal(dryer.value, "Fertig");
+  assert.equal(dryer.sub, "Wäsche kann raus");
+  assert.equal(dryer.color, "var(--green-color)");
+
+  assert.equal(washer.value, "Aus");
+  assert.match(washer.color, /disabled/);
+  assert.doesNotMatch(washer.ring, /class="arc"/);
+
+  assert.deepEqual(r.tiles.map((t) => t.width), ["25%", "25%", "25%", "25%"]);
+  assert.equal(r.footer, null);
+});
+
+test("overview accepts entity shorthand and per-appliance options", () => {
+  const ctx = loadCard();
+  const r = renderOverview(ctx, {
+    devices: ["sensor.oven_status", { device: "washer", name: "Wäsche", icon: "mdi:tshirt-crew" }],
+  }, mkHassMulti(FOUR));
+  assert.equal(r.tiles[0].value, "0:18 h");
+  assert.equal(r.tiles[1].name, "Wäsche");
+  assert.equal(r.tiles[1].icon, "mdi:tshirt-crew");
+  assert.deepEqual(r.tiles.map((t) => t.width), ["50%", "50%"]);
+});
+
+test("hide_off collapses appliances that are off into one line", () => {
+  const ctx = loadCard();
+  const r = renderOverview(ctx, { devices: ["oven", "dish", "dryer", "washer"], hide_off: true }, mkHassMulti(FOUR));
+  assert.deepEqual(r.tiles.map((t) => t.hidden), [false, false, false, true]);
+  assert.equal(r.footer, "Waschmaschine aus");
+  assert.match(r.tiles[0].width, /^33\.33/);
+
+  const allOff = renderOverview(ctx, { devices: ["washer"], hide_off: true }, mkHassMulti(FOUR));
+  assert.equal(allOff.footer, "Alle Geräte aus");
+});
+
+test("one broken entry does not break the other tiles", () => {
+  const ctx = loadCard();
+  const r = renderOverview(ctx, { devices: ["oven", "nope"] }, mkHassMulti(FOUR));
+  assert.equal(r.warning, null);
+  assert.equal(r.tiles[0].value, "0:18 h");
+  assert.equal(r.tiles[1].sub, "Gerät nicht gefunden");
+  assert.match(r.tiles[1].color, /red/);
+});
+
+test("tapping a tile opens that appliance's status sensor", () => {
+  const ctx = loadCard();
+  const r = renderOverview(ctx, { devices: ["oven", "dryer"] }, mkHassMulti(FOUR));
+  r.tiles[1].root.listeners.click[0]();
+  const ev = r.card.dispatched.find((e) => e.type === "hass-more-info");
+  assert.equal(ev.detail.entityId, "sensor.dryer_status");
+});
+
+test("overview stub config lists up to four appliances and never throws", async () => {
+  const ctx = loadCard();
+  const Card = ctx.customElements.get("miele-overview-card");
+  const many = { ...FOUR, extra: ["Oven", { status: "off" }] };
+  assert.equal((await Card.getStubConfig(mkHassMulti(many))).devices.length, 4);
+  assert.deepEqual([...(await Card.getStubConfig({})).devices], []);
+});
+
+test("overview editor maps entries to device IDs and keeps per-appliance options", () => {
+  const ctx = loadCard();
+  const editor = new (ctx.customElements.get("miele-overview-card-editor"))();
+  editor.hass = mkHassMulti(FOUR);
+  editor.setConfig({ type: "custom:miele-overview-card", devices: [{ device: "oven", name: "Ofen" }, "sensor.dryer_status"] });
+  assert.deepEqual([...editor._formData().devices], ["oven", "dryer"]);
+  editor._onFormValue({ devices: ["oven", "washer"], hide_off: true });
+  const ev = editor.dispatched.filter((e) => e.type === "config-changed").pop();
+  assert.deepEqual(JSON.parse(JSON.stringify(ev.detail.config.devices)), [{ device: "oven", name: "Ofen" }, "washer"]);
+  assert.equal(ev.detail.config.hide_off, true);
+});

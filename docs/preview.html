@@ -2,7 +2,7 @@
 <!-- Renders the README preview images: the real card from dist/ with mocked
      ha-card / ha-icon and a mocked hass object. Not Home Assistant itself.
 
-     Parameters:  ?lang=en|de   ?layout=themes|grid
+     Parameters:  ?lang=en|de   ?layout=themes|grid|overview
 
      Regenerate all images from the repo root:  sh docs/render-previews.sh -->
 <html>
@@ -17,6 +17,12 @@
   .grid .theme { width: 498px; flex: none; }
   .grid h2 { margin: 0 4px 12px; font-size: 20px; font-weight: 400; color: var(--primary-text-color); }
   .grid .cards { display: grid; grid-template-columns: 245px 245px; gap: 8px; }
+
+  /* overview card: full section width (≈ 500 px) and phone width (≈ 340 px) */
+  .overview .theme { flex: none; width: 500px; }
+  .overview h3 { margin: 0 4px 8px; font-size: 13px; font-weight: 400; color: var(--secondary-text-color); }
+  .overview miele-overview-card { display: block; height: auto; margin-bottom: 16px; }
+  .overview .phone { width: 340px; }
 
   .light {
     background: #f2f2f2; --card-background-color: #fff; --ha-card-border-color: #e0e0e0;
@@ -52,7 +58,7 @@
 
   const params = new URLSearchParams(location.search);
   const lang = params.get("lang") === "de" ? "de" : "en";
-  const layout = params.get("layout") === "grid" ? "grid" : "themes";
+  const layout = ["grid", "overview"].includes(params.get("layout")) ? params.get("layout") : "themes";
 
   // What Miele@LAN's translations would return for these sensor states
   const LABELS = {
@@ -93,6 +99,43 @@
     ALL_STATES[5],
   ];
 
+  // Several appliances in one hass object: [[model, sensors], ...] -> ids d0, d1, ...
+  function hassMulti(list) {
+    const h = hass("x", {});
+    h.devices = {};
+    list.forEach(([model, ents], i) => {
+      const one = hass(model, ents);
+      h.devices[`d${i}`] = { ...one.devices.dev1, id: `d${i}` };
+      for (const [id, e] of Object.entries(one.entities)) {
+        const nid = id.replace("dev1", `d${i}`);
+        h.entities[nid] = { ...e, entity_id: nid, device_id: `d${i}` };
+        h.states[nid] = { ...one.states[id], entity_id: nid };
+      }
+    });
+    return h;
+  }
+
+  const OVERVIEW = [
+    ["Oven", ALL_STATES[0][2]],
+    ["Washing Machine", HOUSEHOLD[1][2]],
+    ["Tumble Dryer", { status: "program_ended" }],
+    ["Dishwasher", { status: "waiting_to_start", program_id: "eco", start_in_minutes: 88 }],
+  ];
+
+  function addOverview(parent, list, config, label, cls) {
+    const realNow = Date.now;
+    Date.now = () => new Date(2026, 10, 22, 12, 32).getTime();
+    const h = document.createElement("h3");
+    h.textContent = label;
+    parent.appendChild(h);
+    const card = document.createElement("miele-overview-card");
+    if (cls) card.className = cls;
+    parent.appendChild(card);
+    card.setConfig({ type: "custom:miele-overview-card", devices: list.map((_, i) => `d${i}`), ...config });
+    card.hass = hassMulti(list);
+    Date.now = realNow;
+  }
+
   function addCard(parent, [now, model, ents]) {
     const [hh, mm] = now.split(":").map(Number);
     const realNow = Date.now;
@@ -111,6 +154,12 @@
     document.body.appendChild(col);
     if (layout === "themes") {
       ALL_STATES.forEach((c) => addCard(col, c));
+    } else if (layout === "overview") {
+      const de = lang === "de";
+      addOverview(col, OVERVIEW, {}, de ? "Volle Abschnittsbreite" : "Full section width");
+      const phone = OVERVIEW.slice(0, 3).concat([["Dishwasher", { status: "off" }]]);
+      addOverview(col, phone, { hide_off: true },
+        de ? "Handy, ausgeschaltete zusammengefasst (hide_off)" : "Phone, appliances that are off collapsed (hide_off)", "phone");
     } else {
       col.innerHTML = `<h2>${lang === "de" ? "Haushalt" : "Household"}</h2><div class="cards"></div>`;
       HOUSEHOLD.forEach((c) => addCard(col.querySelector(".cards"), c));

@@ -66,6 +66,10 @@ const STRINGS = {
     no_device: "Kein Miele@LAN-Gerät ausgewählt",
     device_missing: "Gerät nicht gefunden",
     no_status: "Kein Status-Sensor gefunden",
+    no_devices: "Keine Miele@LAN-Geräte ausgewählt",
+    start_in: "Start in {d}",
+    offline: "offline",
+    all_off: "Alle Geräte aus",
     profiles: {
       oven: ["Backofen", "Programm beendet"],
       steam_oven: ["Dampfgarer", "Programm beendet"],
@@ -85,6 +89,9 @@ const STRINGS = {
       show_elapsed: "Laufzeit anzeigen",
       show_progress: "Fortschrittsbalken anzeigen",
       finished_text: "Text bei Programmende",
+      devices: "Geräte",
+      columns: "Geräte pro Reihe",
+      hide_off: "Ausgeschaltete Geräte zusammenfassen",
     },
   },
   en: {
@@ -103,6 +110,10 @@ const STRINGS = {
     no_device: "No Miele@LAN device selected",
     device_missing: "Device not found",
     no_status: "No status sensor found",
+    no_devices: "No Miele@LAN appliances selected",
+    start_in: "Starts in {d}",
+    offline: "offline",
+    all_off: "All appliances off",
     profiles: {
       oven: ["Oven", "Program finished"],
       steam_oven: ["Steam oven", "Program finished"],
@@ -122,6 +133,9 @@ const STRINGS = {
       show_elapsed: "Show elapsed time",
       show_progress: "Show progress bar",
       finished_text: "Text when finished",
+      devices: "Appliances",
+      columns: "Appliances per row",
+      hide_off: "Collapse appliances that are off",
     },
   },
 };
@@ -183,7 +197,169 @@ function colorVar(name) {
   return `var(--${n}-color)`;
 }
 
-class MieleCard extends HTMLElement {
+function cap(text) {
+  const s = String(text || "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ------------------------------------------------- shared appliance logic
+// Plain functions so the single card and the overview card read appliances
+// the same way. `map` is { role: entity_id } for one appliance.
+
+function deviceIdFor(hass, cfg) {
+  if (cfg.device) return cfg.device;
+  const ent = cfg.entity && hass.entities && hass.entities[cfg.entity];
+  return ent ? ent.device_id : undefined;
+}
+
+function resolveEntities(hass, deviceId, cfg) {
+  const map = {};
+  for (const e of Object.values(hass.entities || {})) {
+    if (e.device_id !== deviceId || e.platform !== DOMAIN) continue;
+    if (!e.entity_id.startsWith("sensor.") || !e.translation_key) continue;
+    if (ROLES.includes(e.translation_key) && !map[e.translation_key]) map[e.translation_key] = e.entity_id;
+  }
+  if (cfg.entity && !map.status) map.status = cfg.entity;
+  Object.assign(map, cfg.entities || {});
+  return map;
+}
+
+// Resolving entities walks the whole registry, so cache it per appliance
+function cachedEntities(cache, hass, deviceId, cfg) {
+  const key = `${deviceId}|${Object.keys(hass.entities || {}).length}|${JSON.stringify(cfg.entities || {})}`;
+  if (cache.key === key && cache.registry === hass.entities) return cache.map;
+  cache.key = key;
+  cache.registry = hass.entities;
+  cache.map = resolveEntities(hass, deviceId, cfg);
+  return cache.map;
+}
+
+function readState(hass, map, role) {
+  const id = map[role];
+  return id ? hass.states[id] : undefined;
+}
+
+function isValid(hass, map, role) {
+  const s = readState(hass, map, role);
+  return !!s && !EMPTY.has(String(s.state).toLowerCase());
+}
+
+function readNum(hass, map, role) {
+  if (!isValid(hass, map, role)) return undefined;
+  const n = parseFloat(readState(hass, map, role).state);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function stateLabel(hass, map, role) {
+  const s = readState(hass, map, role);
+  if (!s) return "";
+  if (typeof hass.formatEntityState === "function") {
+    try {
+      return hass.formatEntityState(s);
+    } catch (e) {
+      /* fall through */
+    }
+  }
+  const ent = hass.entities && hass.entities[s.entity_id];
+  if (ent && ent.translation_key && typeof hass.localize === "function") {
+    const txt = hass.localize(`component.${DOMAIN}.entity.sensor.${ent.translation_key}.state.${s.state}`);
+    if (txt) return txt;
+  }
+  const raw = String(s.state).replace(/_/g, " ");
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function applianceMode(hass, map) {
+  const statusObj = readState(hass, map, "status");
+  const status = statusObj ? String(statusObj.state) : "unavailable";
+  let mode = MODE_BY_STATUS[status] || "off";
+  if (status === "unavailable" || status === "unknown" || status === "not_connected") mode = "unavailable";
+  if (status === "programmed" && (readNum(hass, map, "start_in_minutes") || 0) > 0) mode = "scheduled";
+  return mode;
+}
+
+// { minutes, finish } while time is left, otherwise undefined
+function remainingTime(hass, map) {
+  let remaining = readNum(hass, map, "remaining_minutes");
+  let finish;
+  if (isValid(hass, map, "finish_time")) {
+    const d = new Date(readState(hass, map, "finish_time").state);
+    if (!Number.isNaN(d.getTime())) finish = d;
+  }
+  if (remaining === undefined && finish) remaining = Math.ceil((finish.getTime() - Date.now()) / 60000);
+  if (remaining === undefined || remaining <= 0) return undefined;
+  if (!finish) finish = new Date(Date.now() + remaining * 60000);
+  return { minutes: remaining, finish };
+}
+
+function stateSignature(hass, map) {
+  return Object.values(map)
+    .map((id) => {
+      const s = hass.states[id];
+      return s ? `${s.state}|${s.last_changed}` : "-";
+    })
+    .join(";");
+}
+
+function applianceName(t, item, device) {
+  const profileName = t.profiles[profileForModel(device && device.model)][0];
+  return item.name || profileName || (device && (device.name_by_user || device.name)) || "Miele";
+}
+
+// ------------------------------------------------------------ base element
+
+class MieleBase extends HTMLElement {
+  set hass(hass) {
+    this._hass = hass;
+    if (this._config) this._safeUpdate();
+  }
+
+  get hass() {
+    return this._hass;
+  }
+
+  _safeUpdate() {
+    try {
+      this._update();
+    } catch (e) {
+      console.error(`${this._tag}: render failed`, e);
+      this._showWarning(`${this._tag}: ${(e && e.message) || e}`);
+    }
+  }
+
+  connectedCallback() {
+    // Re-render every 30 s so the remaining time stays correct even when it
+    // has to be derived from the finish time.
+    this._timer = setInterval(() => {
+      this._signature = "";
+      if (this._hass && this._config) this._safeUpdate();
+    }, 30000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._timer);
+  }
+
+  _moreInfoFor(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", { detail: { entityId }, bubbles: true, composed: true })
+    );
+  }
+
+  _showWarning(text) {
+    this._signature = "";
+    this._warning = true;
+    this.shadowRoot.innerHTML = `<ha-card><div class="warning"></div></ha-card>
+      <style>.warning{padding:12px 16px;color:var(--error-color,#db4437);}</style>`;
+    this.shadowRoot.querySelector(".warning").textContent = text;
+    this._els = { card: this.shadowRoot.querySelector("ha-card") };
+  }
+}
+
+// ------------------------------------------------------------- single card
+
+class MieleCard extends MieleBase {
   static getConfigElement() {
     return document.createElement("miele-card-editor");
   }
@@ -204,8 +380,9 @@ class MieleCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    this._tag = "miele-card";
     this._signature = "";
-    this._entityCache = null;
+    this._entityCache = {};
   }
 
   setConfig(config) {
@@ -214,41 +391,10 @@ class MieleCard extends HTMLElement {
       throw new Error("'entities' must be a mapping of role: entity_id");
     }
     this._config = { ...config };
-    this._entityCache = null;
+    this._entityCache = {};
     this._signature = "";
     this._build();
     if (this._hass) this._safeUpdate();
-  }
-
-  set hass(hass) {
-    this._hass = hass;
-    if (this._config) this._safeUpdate();
-  }
-
-  _safeUpdate() {
-    try {
-      this._update();
-    } catch (e) {
-      console.error("miele-card: render failed", e);
-      this._showWarning(`miele-card: ${(e && e.message) || e}`);
-    }
-  }
-
-  get hass() {
-    return this._hass;
-  }
-
-  connectedCallback() {
-    // Re-render every 30 s so the remaining time stays correct even when it
-    // has to be derived from the finish time.
-    this._timer = setInterval(() => {
-      this._signature = "";
-      if (this._hass && this._config) this._safeUpdate();
-    }, 30000);
-  }
-
-  disconnectedCallback() {
-    clearInterval(this._timer);
   }
 
   getCardSize() {
@@ -267,66 +413,27 @@ class MieleCard extends HTMLElement {
   // ---------------------------------------------------------------- entities
 
   _deviceId() {
-    const c = this._config;
-    if (c.device) return c.device;
-    const ent = c.entity && this._hass.entities && this._hass.entities[c.entity];
-    return ent ? ent.device_id : undefined;
+    return deviceIdFor(this._hass, this._config);
   }
 
   _entities() {
-    const hass = this._hass;
-    const deviceId = this._deviceId();
-    const key = `${deviceId}|${Object.keys(hass.entities || {}).length}|${JSON.stringify(this._config.entities || {})}`;
-    if (this._entityCache && this._entityCache.key === key && this._entityCache.registry === hass.entities) {
-      return this._entityCache.map;
-    }
-    const map = {};
-    for (const e of Object.values(hass.entities || {})) {
-      if (e.device_id !== deviceId || e.platform !== DOMAIN) continue;
-      if (!e.entity_id.startsWith("sensor.") || !e.translation_key) continue;
-      if (ROLES.includes(e.translation_key) && !map[e.translation_key]) map[e.translation_key] = e.entity_id;
-    }
-    if (this._config.entity && !map.status) map.status = this._config.entity;
-    Object.assign(map, this._config.entities || {});
-    this._entityCache = { key, registry: hass.entities, map };
-    return map;
+    return cachedEntities(this._entityCache, this._hass, this._deviceId(), this._config);
   }
 
   _state(role) {
-    const id = this._map[role];
-    return id ? this._hass.states[id] : undefined;
+    return readState(this._hass, this._map, role);
   }
 
   _valid(role) {
-    const s = this._state(role);
-    return !!s && !EMPTY.has(String(s.state).toLowerCase());
+    return isValid(this._hass, this._map, role);
   }
 
   _num(role) {
-    if (!this._valid(role)) return undefined;
-    const n = parseFloat(this._state(role).state);
-    return Number.isFinite(n) ? n : undefined;
+    return readNum(this._hass, this._map, role);
   }
 
   _label(role) {
-    const s = this._state(role);
-    if (!s) return "";
-    if (typeof this._hass.formatEntityState === "function") {
-      try {
-        return this._hass.formatEntityState(s);
-      } catch (e) {
-        /* fall through */
-      }
-    }
-    const ent = this._hass.entities && this._hass.entities[s.entity_id];
-    if (ent && ent.translation_key && typeof this._hass.localize === "function") {
-      const txt = this._hass.localize(
-        `component.${DOMAIN}.entity.sensor.${ent.translation_key}.state.${s.state}`
-      );
-      if (txt) return txt;
-    }
-    const raw = String(s.state).replace(/_/g, " ");
-    return raw.charAt(0).toUpperCase() + raw.slice(1);
+    return stateLabel(this._hass, this._map, role);
   }
 
   // ---------------------------------------------------------------- render
@@ -420,11 +527,7 @@ class MieleCard extends HTMLElement {
   }
 
   _moreInfo() {
-    const entityId = this._map && this._map.status;
-    if (!entityId) return;
-    this.dispatchEvent(
-      new CustomEvent("hass-more-info", { detail: { entityId }, bubbles: true, composed: true })
-    );
+    this._moreInfoFor(this._map && this._map.status);
   }
 
   _update() {
@@ -440,30 +543,15 @@ class MieleCard extends HTMLElement {
     if (!this._map.status) return this._showWarning(t.no_status);
 
     // Only re-render when something relevant changed
-    const sig = [
-      hass.locale && hass.locale.language,
-      ...Object.values(this._map).map((id) => {
-        const s = hass.states[id];
-        return s ? `${s.state}|${s.last_changed}` : "-";
-      }),
-    ].join(";");
+    const sig = `${hass.locale && hass.locale.language};${stateSignature(hass, this._map)}`;
     if (sig === this._signature) return;
     this._signature = sig;
 
     const profileKey = profileForModel(device && device.model);
     const profile = PROFILES[profileKey];
-    const [profileName, profileDone] = t.profiles[profileKey];
-    const name =
-      this._config.name ||
-      profileName ||
-      (device && (device.name_by_user || device.name)) ||
-      "Miele";
-
-    const statusObj = this._state("status");
-    const status = statusObj ? String(statusObj.state) : "unavailable";
-    let mode = MODE_BY_STATUS[status] || "off";
-    if (status === "unavailable" || status === "unknown" || status === "not_connected") mode = "unavailable";
-    if (status === "programmed" && (this._num("start_in_minutes") || 0) > 0) mode = "scheduled";
+    const profileDone = t.profiles[profileKey][1];
+    const name = applianceName(t, this._config, device);
+    const mode = applianceMode(hass, this._map);
 
     const program = this._valid("program_id") ? this._label("program_id") : "";
     const runColor = this._config.color || profile.color;
@@ -558,27 +646,347 @@ class MieleCard extends HTMLElement {
     if (this._valid("program_phase")) parts.push(this._label("program_phase"));
     if (this._valid("drying_step")) parts.push(this._label("drying_step"));
 
-    let remaining = this._num("remaining_minutes");
-    let finish;
-    if (this._valid("finish_time")) {
-      const d = new Date(this._state("finish_time").state);
-      if (!Number.isNaN(d.getTime())) finish = d;
-    }
-    if (remaining === undefined && finish) remaining = Math.ceil((finish.getTime() - Date.now()) / 60000);
-    if (remaining !== undefined && remaining > 0) {
-      if (!finish) finish = new Date(Date.now() + remaining * 60000);
-      parts.push(`${fmt(t.remaining, { d: fmtDuration(remaining) })} (${fmt(t.until, { t: fmtClock(this._hass, finish) })})`);
+    const rem = remainingTime(this._hass, this._map);
+    if (rem) {
+      parts.push(`${fmt(t.remaining, { d: fmtDuration(rem.minutes) })} (${fmt(t.until, { t: fmtClock(this._hass, rem.finish) })})`);
     }
     return parts;
   }
+}
 
-  _showWarning(text) {
+
+// ----------------------------------------------------------- overview card
+
+const RING_R = 20.5;
+const RING_C = 2 * Math.PI * RING_R;
+
+// Only numbers go into this markup; colours come from CSS (--miele-color)
+function ringSvg(progress) {
+  let arc = "";
+  if (progress !== undefined) {
+    const p = Math.min(100, Math.max(0, progress));
+    const offset = (RING_C * (1 - p / 100)).toFixed(2);
+    arc = `<circle class="arc" cx="22" cy="22" r="${RING_R}" stroke-dasharray="${RING_C.toFixed(2)}" stroke-dashoffset="${offset}" transform="rotate(-90 22 22)"></circle>`;
+  }
+  return `<svg class="ring-svg" viewBox="0 0 44 44" width="44" height="44"><circle class="track" cx="22" cy="22" r="${RING_R}"></circle>${arc}</svg>`;
+}
+
+// "abc123" -> { device }, "sensor.x" -> { entity }, objects stay as they are
+function normalizeItem(entry) {
+  if (typeof entry === "string") return entry.indexOf(".") > 0 ? { entity: entry } : { device: entry };
+  if (entry && typeof entry === "object") {
+    if (entry.entities && typeof entry.entities !== "object") {
+      throw new Error("'entities' must be a mapping of role: entity_id");
+    }
+    return { ...entry };
+  }
+  throw new Error("Each entry under 'devices' needs a device or an entity");
+}
+
+class MieleOverviewCard extends MieleBase {
+  static getConfigElement() {
+    return document.createElement("miele-overview-card-editor");
+  }
+
+  static getStubConfig(hass) {
+    try {
+      const ents = Object.values((hass && hass.entities) || {});
+      const devs = Object.values((hass && hass.devices) || {}).filter((d) =>
+        ents.some((e) => e.device_id === d.id && e.platform === DOMAIN)
+      );
+      return { devices: devs.slice(0, 4).map((d) => d.id) };
+    } catch (e) {
+      console.error("miele-overview-card: getStubConfig failed", e);
+      return { devices: [] };
+    }
+  }
+
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._tag = "miele-overview-card";
     this._signature = "";
-    this._warning = true;
-    this.shadowRoot.innerHTML = `<ha-card><div class="warning"></div></ha-card>
-      <style>.warning{padding:12px 16px;color:var(--error-color,#db4437);}</style>`;
-    this.shadowRoot.querySelector(".warning").textContent = text;
-    this._els = { card: this.shadowRoot.querySelector("ha-card") };
+    this._items = [];
+    this._caches = [];
+  }
+
+  setConfig(config) {
+    if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+    if (config.devices !== undefined && !Array.isArray(config.devices)) {
+      throw new Error("'devices' must be a list of appliances");
+    }
+    this._items = (config.devices || []).map(normalizeItem);
+    this._config = { ...config };
+    this._caches = this._items.map(() => ({}));
+    this._signature = "";
+    this._build();
+    if (this._hass) this._safeUpdate();
+  }
+
+  getCardSize() {
+    return 2;
+  }
+
+  getGridOptions() {
+    return { columns: 12, min_columns: 6, rows: "auto" };
+  }
+
+  getLayoutOptions() {
+    return { grid_columns: 4, grid_rows: 2 };
+  }
+
+  _build() {
+    this._warning = false;
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; height: 100%; }
+        ha-card {
+          height: 100%;
+          box-sizing: border-box;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .tiles { display: flex; flex-wrap: wrap; }
+        .tile {
+          box-sizing: border-box;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          padding: 12px 4px 10px;
+          cursor: pointer;
+          border-left: var(--sep, 0) solid var(--divider-color, rgba(127, 127, 127, 0.2));
+        }
+        .tile[hidden] { display: none; }
+        .ring { position: relative; flex: none; width: 44px; height: 44px; }
+        .ring-svg { position: absolute; left: 0; top: 0; display: block; }
+        .track { fill: none; stroke-width: 3; stroke: rgba(127, 127, 127, 0.2); }
+        .arc {
+          fill: none;
+          stroke-width: 3;
+          stroke-linecap: round;
+          stroke: var(--miele-color);
+          transition: stroke-dashoffset 400ms ease-in-out;
+        }
+        .icon {
+          --mdc-icon-size: 22px;
+          position: absolute;
+          left: 5px;
+          top: 5px;
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--miele-color);
+          background: rgba(127, 127, 127, 0.12);
+          background: color-mix(in srgb, var(--miele-color) 20%, transparent);
+        }
+        .name, .value, .sub {
+          max-width: 100%;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .name {
+          margin-top: 6px;
+          font-size: var(--ha-font-size-s, 12px);
+          line-height: 16px;
+          color: var(--secondary-text-color);
+        }
+        .value {
+          font-size: var(--ha-font-size-m, 14px);
+          font-weight: var(--ha-font-weight-medium, 500);
+          line-height: 20px;
+          color: var(--primary-text-color);
+        }
+        .sub {
+          min-height: 14px;
+          font-size: 11px;
+          line-height: 14px;
+          color: var(--secondary-text-color);
+        }
+        .footer {
+          padding: 8px 12px;
+          font-size: var(--ha-font-size-s, 12px);
+          line-height: 16px;
+          text-align: center;
+          color: var(--secondary-text-color);
+          border-top: var(--sep, 1px) solid var(--divider-color, rgba(127, 127, 127, 0.2));
+        }
+        .footer[hidden] { display: none; }
+      </style>
+      <ha-card>
+        <div class="tiles"></div>
+        <div class="footer" hidden></div>
+      </ha-card>
+    `;
+    const tilesEl = this.shadowRoot.querySelector(".tiles");
+    this._tiles = this._items.map((item, i) => {
+      const el = (tag, cls) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        return e;
+      };
+      const tile = {
+        root: el("div", "tile"),
+        ringBox: el("div", "ring"),
+        ring: el("div"),
+        iconBox: el("div", "icon"),
+        icon: el("ha-icon"),
+        name: el("div", "name"),
+        value: el("div", "value"),
+        sub: el("div", "sub"),
+      };
+      tile.iconBox.appendChild(tile.icon);
+      tile.ringBox.appendChild(tile.ring);
+      tile.ringBox.appendChild(tile.iconBox);
+      tile.root.appendChild(tile.ringBox);
+      tile.root.appendChild(tile.name);
+      tile.root.appendChild(tile.value);
+      tile.root.appendChild(tile.sub);
+      tile.root.addEventListener("click", () => this._moreInfoFor(this._entries && this._entries[i].map && this._entries[i].map.status));
+      tilesEl.appendChild(tile.root);
+      return tile;
+    });
+    this._els = {
+      card: this.shadowRoot.querySelector("ha-card"),
+      footer: this.shadowRoot.querySelector(".footer"),
+    };
+  }
+
+  _resolve(item, i) {
+    const hass = this._hass;
+    const deviceId = deviceIdFor(hass, item);
+    const device = deviceId && hass.devices ? hass.devices[deviceId] : undefined;
+    if (!deviceId) return { item, problem: "no_device" };
+    if (hass.devices && !device) return { item, problem: "device_missing" };
+    const map = cachedEntities(this._caches[i], hass, deviceId, item);
+    if (!map.status) return { item, device, problem: "no_status" };
+    return { item, device, map };
+  }
+
+  _update() {
+    const hass = this._hass;
+    const t = strings(hass);
+    if (!this._items.length) return this._showWarning(t.no_devices);
+
+    const entries = this._items.map((item, i) => this._resolve(item, i));
+    const sig = [hass.locale && hass.locale.language]
+      .concat(entries.map((e) => (e.map ? stateSignature(hass, e.map) : e.problem)))
+      .join("#");
+    if (sig === this._signature) return;
+    this._signature = sig;
+    if (this._warning) this._build();
+    this._entries = entries;
+
+    const hideOff = this._config.hide_off === true;
+    const visible = [];
+    const offNames = [];
+    entries.forEach((entry, i) => {
+      const view = this._view(entry, t);
+      const hide = hideOff && (view.mode === "off" || view.mode === "unavailable");
+      this._tiles[i].root.hidden = hide;
+      if (hide) offNames.push(view.name);
+      else visible.push(i);
+      this._paint(this._tiles[i], view);
+    });
+
+    const perRow = Math.max(1, Math.min(visible.length || 1, Number(this._config.columns) || 4));
+    visible.forEach((idx, k) => {
+      const style = this._tiles[idx].root.style;
+      style.setProperty("width", `${Math.floor((10000 / perRow)) / 100}%`);
+      style.setProperty("--sep", k % perRow === 0 ? "0" : "1px");
+    });
+
+    const footer = this._els.footer;
+    footer.hidden = offNames.length === 0;
+    footer.textContent = visible.length ? `${offNames.join(", ")} ${t.off}` : t.all_off;
+    footer.style.setProperty("--sep", visible.length ? "1px" : "0");
+  }
+
+  _view(entry, t) {
+    const hass = this._hass;
+    const item = entry.item;
+    const profileKey = profileForModel(entry.device && entry.device.model);
+    const profile = PROFILES[profileKey];
+    const name = applianceName(t, item, entry.device);
+    const view = { mode: "off", name, icon: item.icon || profile.icon, color: "disabled", value: "", sub: "" };
+
+    if (entry.problem) {
+      return { ...view, mode: "problem", icon: "mdi:alert-circle-outline", color: "red", value: "?", sub: t[entry.problem] };
+    }
+
+    const map = entry.map;
+    const mode = applianceMode(hass, map);
+    const runColor = item.color || profile.color;
+    const program = isValid(hass, map, "program_id") ? stateLabel(hass, map, "program_id") : "";
+    view.mode = mode;
+
+    switch (mode) {
+      case "running":
+      case "paused": {
+        const rem = remainingTime(hass, map);
+        view.color = runColor;
+        view.value = rem ? fmtDuration(rem.minutes) : t.running;
+        if (mode === "paused") view.sub = t.paused;
+        else view.sub = rem ? fmt(t.until, { t: fmtClock(hass, rem.finish) }) : program;
+        if (item.show_progress !== false) view.progress = readNum(hass, map, "progress");
+        break;
+      }
+      case "scheduled": {
+        const startIn = readNum(hass, map, "start_in_minutes");
+        view.color = runColor;
+        if (startIn !== undefined) {
+          view.value = fmtClock(hass, new Date(Date.now() + startIn * 60000));
+          view.sub = fmt(t.start_in, { d: fmtDuration(startIn) });
+        } else {
+          view.value = program || t.on;
+        }
+        break;
+      }
+      case "finished": {
+        view.color = "green";
+        view.value = t.finished;
+        view.sub = item.finished_text || t.profiles[profileKey][1];
+        view.progress = 100;
+        break;
+      }
+      case "error": {
+        view.color = "red";
+        view.value = t.error;
+        view.sub = stateLabel(hass, map, "status");
+        break;
+      }
+      case "ready": {
+        view.color = null;
+        view.value = t.on;
+        view.sub = program;
+        break;
+      }
+      case "unavailable": {
+        view.value = t.offline;
+        break;
+      }
+      default: {
+        view.value = t.off;
+      }
+    }
+    return view;
+  }
+
+  _paint(tile, view) {
+    tile.root.style.setProperty("--miele-color", colorVar(view.color));
+    tile.icon.setAttribute("icon", view.icon);
+    tile.name.textContent = view.name;
+    tile.root.title = `${view.name}: ${view.value}${view.sub ? ` · ${view.sub}` : ""}`;
+    tile.value.textContent = cap(view.value);
+    tile.sub.textContent = view.sub || "";
+    tile.ring.innerHTML = ringSvg(view.progress);
   }
 }
 
@@ -665,26 +1073,83 @@ class MieleCardEditor extends HTMLElement {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (s) => strings(this._hass).editor[s.name] || s.name;
-      this._form.addEventListener("value-changed", (ev) => {
-        const config = { ...ev.detail.value };
-        for (const k of Object.keys(config)) {
-          if (config[k] === "" || config[k] === undefined) delete config[k];
-        }
-        this._config = config;
-        this._emit(config);
-      });
+      this._form.addEventListener("value-changed", (ev) => this._onFormValue(ev.detail.value));
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
     this._form.schema = this._schema();
+    this._form.data = this._formData();
+  }
+
+  _formData() {
     const device = this._config.device && this._hass.devices ? this._hass.devices[this._config.device] : undefined;
     const profile = PROFILES[profileForModel(device && device.model)];
-    this._form.data = { show_progress: true, show_elapsed: profile.elapsed, ...this._config };
+    return { show_progress: true, show_elapsed: profile.elapsed, ...this._config };
+  }
+
+  _onFormValue(value) {
+    const config = { ...value };
+    for (const k of Object.keys(config)) {
+      if (config[k] === "" || config[k] === undefined) delete config[k];
+    }
+    this._config = config;
+    this._emit(config);
+  }
+}
+
+// The device picker only knows device IDs; options set in YAML per appliance
+// (name, icon, ...) are kept for appliances that stay in the list.
+class MieleOverviewCardEditor extends MieleCardEditor {
+  _fillRequired() {}
+
+  _deviceIdOf(entry) {
+    try {
+      return deviceIdFor(this._hass || {}, normalizeItem(entry));
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  _schema() {
+    return [
+      { name: "devices", required: true, selector: { device: { integration: DOMAIN, multiple: true } } },
+      {
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } },
+          { name: "hide_off", selector: { boolean: {} } },
+        ],
+      },
+    ];
+  }
+
+  _formData() {
+    const ids = (this._config.devices || []).map((e) => this._deviceIdOf(e)).filter(Boolean);
+    return { ...this._config, devices: ids };
+  }
+
+  _onFormValue(value) {
+    const old = this._config.devices || [];
+    const devices = (value.devices || []).map((id) => {
+      const keep = old.find((e) => this._deviceIdOf(e) === id);
+      return keep !== undefined ? keep : id;
+    });
+    const config = { ...this._config, ...value, devices };
+    for (const k of Object.keys(config)) {
+      if (config[k] === "" || config[k] === undefined || config[k] === null) delete config[k];
+    }
+    this._config = config;
+    this._emit(config);
   }
 }
 
 if (!customElements.get("miele-card")) customElements.define("miele-card", MieleCard);
 if (!customElements.get("miele-card-editor")) customElements.define("miele-card-editor", MieleCardEditor);
+if (!customElements.get("miele-overview-card")) customElements.define("miele-overview-card", MieleOverviewCard);
+if (!customElements.get("miele-overview-card-editor")) {
+  customElements.define("miele-overview-card-editor", MieleOverviewCardEditor);
+}
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "miele-card")) {
@@ -696,12 +1161,22 @@ if (!window.customCards.some((c) => c.type === "miele-card")) {
     documentationURL: "https://github.com/yannick80/ha-card-for-miele",
   });
 }
+if (!window.customCards.some((c) => c.type === "miele-overview-card")) {
+  window.customCards.push({
+    type: "miele-overview-card",
+    name: "Overview card for Miele@LAN",
+    description: "Several Miele@LAN appliances side by side: time left, start time or state",
+    preview: true,
+    documentationURL: "https://github.com/yannick80/ha-card-for-miele#overview-card",
+  });
+}
 
 console.info(`%c miele-card %c ${VERSION} `, "color:#fff;background:#555;font-weight:700", "color:#555;background:#eee");
 
 // Test hook: only active when evaluated with a CommonJS-style `module` (node tests)
 if (typeof module !== "undefined" && module && module.exports) {
-  module.exports = { MieleCard: MieleCard, MieleCardEditor: MieleCardEditor, profileForModel: profileForModel,
+  module.exports = { MieleCard: MieleCard, MieleCardEditor: MieleCardEditor, MieleOverviewCard: MieleOverviewCard,
+    profileForModel: profileForModel,
     fmtDuration: fmtDuration, colorVar: colorVar };
 }
 })();
