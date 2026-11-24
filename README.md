@@ -36,6 +36,7 @@ Pick an appliance and the card shows, in one tile, what it is doing right now: p
 [Installation](#installation) ·
 [Add the card](#add-the-card) ·
 [Options](#options) ·
+[Overview card](#overview-card) ·
 [Tips](#tips) ·
 [Troubleshooting & FAQ](#troubleshooting--faq) ·
 [Getting help](#getting-help) ·
@@ -46,6 +47,7 @@ Pick an appliance and the card shows, in one tile, what it is doing right now: p
 ## What you get
 
 - **One tile per appliance.** Programme in the first line, the details in the second, a progress bar while it runs.
+- **Or several appliances in one card.** The [overview card](#overview-card) puts up to four appliances side by side, each with the one value that matters right now.
 - **Pick the appliance, not entities.** The card finds the appliance's sensors on its own, whatever language Miele@LAN was set up in and however you renamed them.
 - **Ovens, dishwashers, washing machines, dryers, washer-dryers, steam ovens, microwaves and coffee machines.** Parts an appliance does not report are simply left out.
 - **Your Home Assistant language.** Programme, phase and drying step come from Miele@LAN's translations. The card's own texts are in English and German.
@@ -119,7 +121,7 @@ In a sections dashboard at its default width (6 of 12 columns), the text wraps o
 2. Copy it to `config/www/miele-card.js` (the `www` folder next to `configuration.yaml`; create it if it does not exist).
 3. Go to **Settings** > **Dashboards**, select the three dots, then **Resources**.
    (No **Resources** entry? Turn on **Advanced mode** in your user profile first.)
-4. Select **Add resource**, enter `/local/miele-card.js?v=0.1.0`, choose **JavaScript module** and select **Create**.
+4. Select **Add resource**, enter `/local/miele-card.js?v=1.0.1`, choose **JavaScript module** and select **Create**.
    Raise the `?v=` number after each update so browsers load the new file.
 5. Reload the browser.
 <!-- ha-marketplace:exclude-end -->
@@ -183,11 +185,56 @@ show_progress: true
 finished_text: Time to hang it up
 ```
 
+## Overview card
+
+For a summary dashboard: several appliances side by side in one card, each showing only the most important value. Tap an appliance to open its status with all details.
+
+![Overview card with oven, washing machine, dryer and dishwasher side by side, light and dark, at full section width and at phone width](docs/preview-overview.png)
+
+| State | Large value | Below | Ring around the icon |
+|---|---|---|---|
+| Running | Time left, e.g. **0:18 h** | until 12:50 | progress in the appliance colour |
+| Paused | Time left | Paused | progress |
+| Delayed start | Start time, e.g. **14:00** | Starts in 1:28 h | – |
+| Finished | **Finished** | Laundry is dry | full, green |
+| Fault | **Fault** | the reported status | – (red icon) |
+| On, no programme | **On** | selected programme, if any | – |
+| Off / not reachable | **Off** / **offline** | – | – (grey icon) |
+
+Add it with **Add card** > **Overview card for Miele@LAN** and pick the appliances. In YAML:
+
+```yaml
+type: custom:miele-overview-card
+devices:
+  - 0123456789abcdef0123456789abcdef
+  - fedcba9876543210fedcba9876543210
+  - sensor.dishwasher_status          # any sensor of the appliance works too
+  - device: 00112233445566778899aabbccddeeff
+    name: Wash                        # short names fit better on phones
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `devices` | – | List of appliances: a device ID, any sensor of the appliance, or a mapping with options |
+| `columns` | up to 4 | Appliances per row; more appliances wrap onto the next row |
+| `hide_off` | `false` | Leave out appliances that are off or unavailable and list them in one line instead ("Dishwasher off", or "All appliances off") |
+
+Options per appliance (in the mapping form): `device` or `entity`, `name`, `icon`, `color`, `show_progress`, `finished_text` and `entities`, as for the [single card](#options). The visual editor sets the appliances and the card options; per-appliance options are set in YAML and kept when you change the list in the editor.
+
+The card is meant for the full section width (12 columns). On a phone, four appliances get about 85 px each: long names such as "Washing machine" are shortened with "…", so give them a short `name`.
+
+<details>
+<summary>German interface (Deutsch)</summary>
+
+![Übersichtskarte auf Deutsch, helles und dunkles Theme](docs/preview-overview-de.png)
+
+</details>
+
 ## Tips
 
 - **Hide the card while the appliance is off.** In a sections dashboard, open the card's **Visibility** tab and add a condition on the state of the appliance's **Status** sensor. In other dashboards, wrap the card in a `conditional` card.
 - **Tap the card** to open the appliance's **Status** sensor with its history.
-- **Several appliances** look best two per row in a sections dashboard (the default width).
+- **Several appliances** look best two per row in a sections dashboard (the default width), or together in the [overview card](#overview-card).
 - **Notifications** ("laundry is done") are a job for an automation on the **Status** sensor, not for the card. See [Miele@LAN's notes on automations](https://github.com/tiehfood/ha-miele-at-lan#notifications-and-automations).
 
 ## Troubleshooting & FAQ
@@ -211,7 +258,7 @@ The card only shows what Miele@LAN reports. Many sensors stay "Unknown" until a 
 
 ### The card still shows the old version after an update
 
-Reload the browser with the cache cleared. The browser console (F12) shows the loaded version as `miele-card 0.1.0`.
+Reload the browser with the cache cleared. The browser console (F12) shows the loaded version as `miele-card 1.0.1`.
 
 ## Getting help
 
