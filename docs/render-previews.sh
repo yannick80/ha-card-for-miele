@@ -15,4 +15,6 @@ shot() { # <output> <width,height> <query>
 shot docs/preview.png      760,452 "lang=en&layout=themes"
 shot docs/preview-de.png   760,452 "lang=de&layout=themes"
 shot docs/preview-grid.png 1060,212 "lang=en&layout=grid"
+shot docs/preview-overview.png 1064,374 "lang=en&layout=overview"
+shot docs/preview-overview-de.png 1064,374 "lang=de&layout=overview"
 rm -rf "$PROFILE"

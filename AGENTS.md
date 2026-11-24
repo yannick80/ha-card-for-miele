@@ -42,6 +42,9 @@ README.md, CHANGELOG.md, LICENSE
   `miele_lan` + `translation_key`), never by entity ID patterns. Users can
   override single roles with `entities:`.
 - No silent defaults: without a device the card shows a hint.
+- Both cards (`miele-card`, `miele-overview-card`) live in the one file and
+  share the appliance logic (`resolveEntities`, `applianceMode`,
+  `remainingTime`, …); the ring SVG markup contains numbers only.
 - State labels: `hass.formatEntityState`, fallback
   `hass.localize("component.miele_lan.entity.sensor.<key>.state.<state>")`.
 - Editor: load `ha-form` via `loadCardHelpers()` before use; write the device
@@ -59,7 +62,10 @@ README.md, CHANGELOG.md, LICENSE
 - render errors shown inside the card;
 - `getCardSize`, `getGridOptions`, `getLayoutOptions`;
 - `getStubConfig` returns an explicit device and never throws;
-- editor works without `ha-form` and fills in the device.
+- editor works without `ha-form` and fills in the device;
+- overview card: hint without devices, values per state, `hide_off`
+  footer, broken entries, tap to more-info, stub config, editor keeps
+  per-appliance options.
 
 Visual check: render with Playwright and mocked `ha-card`/`ha-icon` (inline
 MDI SVG paths), light and dark, every state, at the real tile size (6 of 12
