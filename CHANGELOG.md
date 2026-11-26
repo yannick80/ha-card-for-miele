@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 1.1.1 - 2026-11-26
+
 ### Changed
 - License: copyright holder written as full name.
 
