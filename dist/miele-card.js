@@ -12,7 +12,7 @@
 (function () {
 "use strict";
 
-const VERSION = "1.0.1";
+const VERSION = "1.1.0";
 const DOMAIN = "miele_lan";
 
 // translation_keys of Miele@LAN sensors the card can use
